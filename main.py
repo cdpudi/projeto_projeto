@@ -3,10 +3,10 @@ import pdfplumber
 import re
 import io
 
-# --- CONFIGURAÇÃO DA PÁGINA (Mantida) ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="IA na Gestão de Processos", page_icon="🤖", layout="wide")
 
-# --- ESTILO CSS (Mantido conforme sua aprovação) ---
+# --- ESTILO CSS ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
@@ -37,7 +37,6 @@ def processar_auditoria(pdf_file):
         for pagina in pdf.pages:
             texto = pagina.extract_text()
             if not texto: continue
-            
             linhas = texto.split('\n')
             motorista_atual = "Desconhecido"
             
@@ -55,57 +54,39 @@ def processar_auditoria(pdf_file):
                 data_dia = partes[0]
                 erros = []
                 
-                # --- LÓGICA DE AUDITORIA POR COLUNA (TRANS-PEDROSA) ---
                 if "Trabalho" in linha:
-                    # Capturamos todos os valores de hora na linha
-                    # Ordem esperada: Início, Fim, Jornada Normal, Jornada Diária, [Refeição], [Interj]
                     horas_na_linha = re.findall(r"\d{2}:\d{2}", linha)
                     
-                    # 1. Validação de Lançamento Básico
                     if len(horas_na_linha) < 3:
                         erros.append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO (Início/Fim)")
                         continue
 
-                    # 2. Identificação Dinâmica (Evita confundir Interj com Refeição)
-                    # Procuramos a Jornada Normal (geralmente 08:00)
-                    j_normal_min = 0
-                    if "08:00" in horas_na_linha:
-                        j_normal_min = 480 
+                    # --- LÓGICA DE POSIÇÃO ---
+                    # No PDF do Marcelo: ['17:05', '05:00', '08:00', '11:55', '12:03']
+                    # O '12:03' é o Interj (sempre o último valor de hora da linha de trabalho)
+                    interj_valor = horas_na_linha[-1]
+                    min_interj = converter_para_minutos(interj_valor)
                     
-                    # Critério Refeição (Se Jornada Normal > 6h)
-                    # No PDF do Marcelo Wender, a Refeição estaria logo após a Jornada Diária (11:55)
-                    # Mas como está vazia, o próximo valor é o Interj (12:03)
-                    # Vamos verificar se a palavra "Refeição" ou o campo correspondente está zerado
-                    
-                    # Se a linha tem '11:55' e '12:03', e o '12:03' é claramente o Interstício
-                    possivel_interj = horas_na_linha[-1]
-                    min_interj = converter_para_minutos(possivel_interj)
-                    
-                    # REGRA INTERSTÍCIO (Obrigatório > 11h)
-                    if min_interj < 660: # 11 horas = 660 min
-                         erros.append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({possivel_interj})")
+                    # 1. Regra Interstício (Mínimo 11h = 660 min)
+                    if min_interj < 660:
+                        erros.append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj_valor})")
 
-                    # REGRA REFEIÇÃO (Obrigatória se J. Normal > 6h e Max 2h)
-                    # Verificamos se existe um valor de refeição (é o valor entre a Diária e o Interj)
-                    # No Marcelo Wender, horas_na_linha = ['17:05', '05:00', '08:00', '11:55', '12:03']
-                    # O '12:03' é o último (Interj). O '11:55' é a Diária. Não sobra nada para Refeição.
-                    if len(horas_na_linha) < 6: # Significa que um campo (Refeição) está faltando
+                    # 2. Regra Refeição (Se Jornada Normal > 6h)
+                    # Se tivermos apenas 5 horários (como no caso do Marcelo), falta a Refeição
+                    if len(horas_na_linha) < 6:
                         erros.append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
                     else:
-                        # Se houver 6 ou mais horários, o da Refeição é geralmente o penúltimo ou antepenúltimo
-                        # Vamos validar se algum valor de refeição lançado é > 2h
-                        # Na Transpedrosa a Refeição é a 6ª coluna de dados
-                        refeicao_valor = horas_na_linha[4] # Índice 4 após Início, Fim, Normal, Diária
+                        # Se houver 6 ou mais, a refeição é o valor antes do Interstício
+                        refeicao_valor = horas_na_linha[4]
                         min_ref = converter_para_minutos(refeicao_valor)
                         if min_ref > 120:
                             erros.append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao_valor})")
                 
                 if erros:
                     relatorio_final[motorista_atual].extend(list(set(erros)))
-
     return relatorio_final
 
-# --- INTERFACE (IDENTIDADE VISUAL PRESERVADA) ---
+# --- INTERFACE ---
 col_logo, col_adm = st.columns([1, 1])
 with col_logo:
     st.image("https://portalinstitucional-assets.azureedge.net/strapi/assets/Logo_Anhanguera_Horizontal_170x60px_1_d985ea5183.svg", width=220)
@@ -153,4 +134,5 @@ with c_main:
             st.download_button("💾 Baixar TXT", txt_out, "auditoria.txt")
         else: st.success("✅ Nenhuma inconsistência detectada.")
 
-st.markdown("<div class="footer-credits"><p style='font-size: 0.8em; color: #999;'>Workshop IA Aplicada | Versão 1.1 | Status: Online</p></div>", unsafe_allow_html=True)
+# CORREÇÃO DA SINTAXE NO FOOTER ABAIXO:
+st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão 1.1 | Status: Online</p></div>', unsafe_allow_html=True)
