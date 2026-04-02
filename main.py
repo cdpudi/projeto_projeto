@@ -19,7 +19,7 @@ st.markdown("""
     
     .stApp { background-color: #f4f7f6; }
     
-    /* Card de Metodologia */
+    /* Card de Metodologia (Topo Azul) */
     .concept-card {
         background: linear-gradient(135deg, #004a99 0%, #002d5f 100%);
         color: white;
@@ -37,6 +37,22 @@ st.markdown("""
         margin: 15px 0;
     }
 
+    /* Card Lateral de Status (Branco) - AUMENTADO */
+    .side-info-card {
+        background-color: white;
+        padding: 30px; /* Aumentado */
+        border-radius: 15px; /* Aumentado */
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05); /* Adicionado sombra sutil */
+        margin-bottom: 1.5rem;
+    }
+
+    .monitoring-item {
+        font-size: 0.85em;
+        color: #444;
+        margin: 8px 0;
+    }
+
     /* Estilo para créditos */
     .footer-credits {
         background-color: #ffffff;
@@ -48,11 +64,12 @@ st.markdown("""
     }
 
     .status-badge {
-        padding: 4px 10px;
+        padding: 6px 12px;
         border-radius: 20px;
-        font-size: 12px;
+        font-size: 13px;
         background-color: #28a745;
         color: white;
+        font-weight: bold;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -114,7 +131,7 @@ with header_col2:
                 <p style='font-size: 1.2em; color: #333;'>Prof. Cleidson Daniel</p>
                 </div>""", unsafe_allow_html=True)
 
-# Card de Conceito IA
+# Card de Conceito IA (Topo)
 st.markdown("""
     <div class="concept-card">
         <h1 style='margin-top:0;'>IA na Administração & Gestão de Processos</h1>
@@ -126,22 +143,30 @@ st.markdown("""
     </div>
     """, unsafe_allow_html=True)
 
-# Grid Lateral para Informações da Aluna e Status
-col_main, col_side = st.columns([2, 1])
+# Grid Central - Área Principal e Lateral Ampliada
+# Aumentei a proporção lateral para 1.2 para expandir o card de status
+col_main, col_side = st.columns([2, 1.2])
 
 with col_side:
     st.markdown(f"""
-        <div style="background-color: white; padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0;">
-            <h4 style='color: #004a99; margin-top:0;'>💡 Proposta Selecionada</h4>
-            <p style='font-size: 0.9em;'><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES<br>
-            <b>ID:</b> <code>#IA-17750026</code><br>
-            <b>Setor:</b> Recursos Humanos (RH)</p>
-            <hr>
-            <p style='font-size: 0.8em; color: #666;'><b>Monitoramento de Processos:</b><br>
-            - Validação de Interstício (11h)<br>
-            - Verificação de Batidas Reais<br>
-            - Auditoria de Jornada Diária</p>
-            <span class="status-badge">Sinalização: Ativa ✅</span>
+        <div class="side-info-card">
+            <h3 style='color: #004a99; margin-top:0; border-bottom: 2px solid #004a99; padding-bottom: 10px;'>
+                Proposta Selecionada
+            </h3>
+            <p style='font-size: 0.95em; color: #333; margin-top: 20px;'>
+                <b>Aluna:</b> RAYNARAH MALAQUIAS SOARES<br>
+                <b>ID:</b> <code>#IA-17750026</code><br>
+                <b>Setor:</b> Recursos Humanos (RH)
+            </p>
+            <br>
+            <h5 style='color: #004a99; margin-bottom: 15px;'>📡 Monitoramento de Processos:</h5>
+            <div class="monitoring-item">✅ Validação de Interstício (11h)</div>
+            <div class="monitoring-item">✅ Verificação de Intervalo Alimentação</div>
+            <div class="monitoring-item">✅ Auditoria de Jornada Diária</div>
+            <br>
+            <div style="text-align: center; margin-top: 15px;">
+                <span class="status-badge">Sistema: ONLINE ✅</span>
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -165,7 +190,7 @@ with col_main:
                             st.error(erro)
                             txt_output += f"{motorista} | {erro}\n"
             
-            st.download_button("💾 Exportar Relatório para Gestão (.txt)", txt_output, "auditoria_ia.txt")
+            st.download_button("💾 Exportar Relatório (.txt)", txt_output, "auditoria_ia.txt")
         else:
             st.balloons()
             st.success("✅ Nenhuma inconsistência detectada nos processos auditados.")
