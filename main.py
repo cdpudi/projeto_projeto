@@ -13,80 +13,73 @@ st.markdown("""
     .stApp { background-color: #f4f7f6; }
     .concept-card { background: linear-gradient(135deg, #004a99 0%, #002d5f 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; }
     .side-info-card { background-color: white; padding: 30px; border-radius: 15px; border: 1px solid #e0e0e0; }
-    .status-badge { padding: 6px 12px; border-radius: 20px; font-size: 13px; background-color: #28a745; color: white; font-weight: bold; }
     .footer-credits { background-color: #ffffff; padding: 1rem; border-radius: 10px; text-align: center; margin-top: 2rem; border: 1px solid #e0e0e0; }
     </style>
     """, unsafe_allow_html=True)
 
 def converter_minutos(h):
-    if not h: return 0
+    if not h or h == "" or h == "00:00": return 0
     try:
+        h = h.strip().split('\n')[0] # Pega apenas a primeira linha se houver quebra
         partes = h.split(':')
         return int(partes[0]) * 60 + int(partes[1])
     except: return 0
 
-def auditoria_transpedrosa(pdf_file):
+def auditoria_final(pdf_file):
     relatorio = {}
+    
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
+            # Extrair nome do funcionário
             text = page.extract_text()
-            # Captura nome do funcionário
             func_match = re.search(r"Funcionário:\s*(.*?)(?=Admissão|CPF|$)", text)
             nome = func_match.group(1).strip() if func_match else "Desconhecido"
             if nome not in relatorio: relatorio[nome] = []
 
-            linhas = text.split('\n')
-            for linha in linhas:
-                if re.match(r"^\d{2}/\d{2}/\d{2}", linha) and "Trabalho" in linha:
-                    partes = linha.split()
-                    data_dia = partes[0]
-                    
-                    # Pegamos todos os horários HH:MM da linha
-                    horas = re.findall(r"\d{2}:\d{2}", linha)
-                    
-                    if len(horas) >= 3:
-                        # 1. Localizar Marco Zero (Jornada Normal 08:00)
-                        try:
-                            idx_8 = horas.index("08:00")
-                            # Diária: sempre após o 08:00
-                            v_diaria = horas[idx_8 + 1] if len(horas) > idx_8 + 1 else "00:00"
-                            
-                            # Refeição: Vamos verificar se existe um valor de refeição real
-                            # No caso do Bruno, o 01:03 aparece após a Diária.
-                            # No caso do Marcelo, após a Diária já pula para o Interj (12:03).
-                            
-                            proximo_valor = horas[idx_8 + 2] if len(horas) > idx_8 + 2 else "00:00"
-                            min_proximo = converter_minutos(proximo_valor)
-                            
-                            refeicao = "00:00"
-                            interj = "00:00"
+            # Extração de tabela com estratégia de texto para capturar campos vazios
+            table = page.extract_table()
+            if not table: continue
 
-                            # LÓGICA DE DECISÃO:
-                            # Se o valor após a diária for pequeno (até 2h), é REFEIÇÃO.
-                            # Se for grande (perto de 11h), a refeição foi PULADA e o valor é o INTERSTÍCIO.
-                            if 0 < min_proximo <= 150: # Até 2h30 para margem de erro
-                                refeicao = proximo_valor
-                                # O próximo depois da refeição seria o Interj
-                                if len(horas) > idx_8 + 3:
-                                    interj = horas[idx_8 + 3]
-                            else:
-                                # Se o valor é alto, ele já é o Interstício
-                                interj = proximo_valor
-                                refeicao = "00:00"
+            for row in table:
+                # row[0] costuma ser a Data, row[1] o Tipo
+                if row[0] and re.match(r"^\d{2}/\d{2}/\d{2}", row[0]):
+                    data_dia = row[0].split()[0]
+                    tipo = row[1] if len(row) > 1 else ""
+                    
+                    if "Trabalho" in str(tipo):
+                        # Mapeamento Transpedrosa nas colunas da tabela extraída:
+                        # [2]Início/Fim, [3]J.Normal, [4]J.Diária, [5]Refeição, [6]Repouso, [7]Faltas, [8]Interj
+                        
+                        inicio_fim = row[2] if len(row) > 2 else ""
+                        j_normal = row[3] if len(row) > 3 else ""
+                        refeicao = row[5] if len(row) > 5 else ""
+                        faltas = row[7] if len(row) > 7 else ""
+                        interj = row[8] if len(row) > 8 else ""
 
-                            # --- VALIDAÇÕES ---
-                            # A) Refeição (Obrigatória se Normal > 6h)
-                            if converter_minutos(refeicao) == 0:
+                        # CRITÉRIO 1: Se tem 08:00 em Faltas, ele não trabalhou. Ignora auditoria.
+                        if "08:00" in str(faltas):
+                            continue
+
+                        # CRITÉRIO 2: Se é Trabalho e não tem Início/Fim registrado
+                        if not inicio_fim or ":" not in str(inicio_fim):
+                            relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO (Início/Fim não registrados)")
+                            continue
+
+                        # CRITÉRIO 3: Refeição (Obrigatória se J.Normal > 6h)
+                        min_normal = converter_minutos(j_normal)
+                        if min_normal > 360: # Maior que 6 horas
+                            min_ref = converter_minutos(refeicao)
+                            if min_ref == 0:
                                 relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
-                            elif converter_minutos(refeicao) > 120:
-                                relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
+                            elif min_ref > 120:
+                                relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao.strip()})")
 
-                            # B) Interstício (Mínimo 11h)
-                            if interj != "00:00":
-                                if converter_minutos(interj) < 660:
-                                    relatorio[nome].append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj})")
-                        except ValueError:
-                            pass
+                        # CRITÉRIO 4: Interstício (Mínimo 11h)
+                        if interj:
+                            min_interj = converter_minutos(interj)
+                            if 0 < min_interj < 660: # Menor que 11h
+                                relatorio[nome].append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj.strip()})")
+                                
     return relatorio
 
 # --- INTERFACE ---
@@ -99,19 +92,19 @@ st.markdown("""<div class="concept-card"><h1>IA na Administração & Gestão de 
 c_main, c_side = st.columns([2, 1.2])
 
 with c_side:
-    st.markdown(f"""<div class="side-info-card"><h3>Proposta Selecionada</h3><p><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES</p><hr><h5>📡 Monitoramento:</h5><div style='font-size:0.85em'>✅ Validação de Interstício (11h)<br>✅ Verificação de Intervalo Alimentação<br>✅ Auditoria de Jornada Diária</div></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div class="side-info-card"><h3>Proposta Selecionada</h3><p><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES</p><hr><h5>📡 Monitoramento:</h5><div style='font-size:0.85em'>✅ Ignorar Faltas Lançadas<br>✅ Refeição Obrigatória (Max 2h)<br>✅ Interstício Mínimo (11h)</div></div>""", unsafe_allow_html=True)
 
 with c_main:
     st.subheader("📁 Auditoria de Documentos")
     up = st.file_uploader("Upload PDF", type="pdf", label_visibility="collapsed")
     if up:
-        with st.status("Analisando..."):
-            res = auditoria_transpedrosa(up)
+        with st.status("Auditando...", expanded=False):
+            res = auditoria_final(up)
         if res:
             for mot, errs in res.items():
                 if errs:
                     with st.expander(f"👤 {mot}"):
                         for e in sorted(list(set(errs))): st.error(e)
-        else: st.success("✅ Tudo em conformidade.")
+        else: st.success("✅ Nenhuma inconsistência detectada nos dias trabalhados.")
 
-st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão 1.4 | Status: Online</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão 1.5 | Status: Online</p></div>', unsafe_allow_html=True)
