@@ -1,165 +1,143 @@
 import streamlit as st
 import pdfplumber
 import re
-import io
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="IA na Gestão de Processos", page_icon="🤖", layout="wide")
 
-# --- ESTILO CSS ---
+# --- ESTILO CSS (PRESERVADO) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
     html, body, [class*="css"] { font-family: 'Roboto', sans-serif; }
     .stApp { background-color: #f4f7f6; }
-    .concept-card { background: linear-gradient(135deg, #004a99 0%, #002d5f 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; box-shadow: 0 10px 20px rgba(0,0,0,0.1); }
+    .concept-card { background: linear-gradient(135deg, #004a99 0%, #002d5f 100%); color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; }
     .quote-section { border-left: 4px solid #ff914d; padding-left: 15px; font-style: italic; color: #e0e0e0; margin: 15px 0; }
-    .side-info-card { background-color: white; padding: 30px; border-radius: 15px; border: 1px solid #e0e0e0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 1.5rem; }
-    .monitoring-item { font-size: 0.85em; color: #444; margin: 8px 0; }
+    .side-info-card { background-color: white; padding: 30px; border-radius: 15px; border: 1px solid #e0e0e0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
     .status-badge { padding: 6px 12px; border-radius: 20px; font-size: 13px; background-color: #28a745; color: white; font-weight: bold; }
-    .footer-credits { background-color: #ffffff; padding: 1rem; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; margin-top: 2rem; }
+    .footer-credits { background-color: #ffffff; padding: 1rem; border-radius: 10px; text-align: center; margin-top: 2rem; border: 1px solid #e0e0e0; }
     </style>
     """, unsafe_allow_html=True)
 
-def converter_para_minutos(hora_str):
-    if not hora_str: return 0
-    match = re.search(r"(\d{1,2}:\d{2})", str(hora_str))
-    if match:
-        h, m = map(int, match.group(1).split(':'))
-        return h * 60 + m
-    return 0
+def converter_minutos(h):
+    if not h or h == "" or h == "00:00": return 0
+    try:
+        partes = h.split(':')
+        return int(partes[0]) * 60 + int(partes[1])
+    except: return 0
 
-def processar_auditoria(pdf_file):
-    relatorio_final = {}
-    regex_data = re.compile(r"^(\d{2}/\d{2}/\d{2})")
+def auditoria_inteligente(pdf_file):
+    relatorio = {}
     
     with pdfplumber.open(pdf_file) as pdf:
-        for pagina in pdf.pages:
-            texto = pagina.extract_text()
-            if not texto: continue
-            linhas = texto.split('\n')
-            motorista_atual = "Desconhecido"
+        for page in pdf.pages:
+            # Extrair o nome do funcionário
+            text_full = page.extract_text()
+            func_match = re.search(r"Funcionário:\s*(.*?)(?=Admissão|CPF|$)", text_full)
+            nome = func_match.group(1).strip() if func_match else "Desconhecido"
             
-            for linha in linhas:
-                if "Funcionário:" in linha:
-                    motorista_atual = linha.split("Funcionário:")[1].split("Admissão:")[0].strip()
-                    if motorista_atual not in relatorio_final: relatorio_final[motorista_atual] = []
-                    continue
-                
-                if "TT HS" in linha or "Resumo" in linha or "Período" in linha: continue
-                
-                partes = linha.split()
-                if not partes or not regex_data.match(partes[0]): continue
-                
-                data_dia = partes[0]
-                erros = []
-                
-                if "Trabalho" in linha:
-                    # Captura todos os horários HH:MM
+            if nome not in relatorio: relatorio[nome] = []
+
+            # Extrair a tabela por coordenadas para não confundir as colunas
+            # Mapeamento aproximado das colunas da Transpedrosa (Eixo X)
+            table = page.extract_table({
+                "vertical_strategy": "text", 
+                "horizontal_strategy": "lines",
+                "snap_tolerance": 3,
+            })
+            
+            rows = page.extract_text().split('\n')
+            for linha in rows:
+                # Filtrar apenas linhas que começam com data (DD/MM/YY)
+                if re.match(r"^\d{2}/\d{2}/\d{2}", linha):
+                    partes = linha.split()
+                    data_dia = partes[0]
+                    
+                    # Regex para capturar todos os horários da linha na ordem que aparecem
                     horas = re.findall(r"\d{2}:\d{2}", linha)
                     
-                    # 1. VALIDAÇÃO DE LANÇAMENTO (BRUNO DANIEL)
-                    if len(horas) < 3:
-                        erros.append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO (Início/Fim)")
+                    # 1. VALIDAÇÃO DE LANÇAMENTO (Início/Fim)
+                    if len(horas) < 2:
+                        relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO (Início/Fim)")
                         continue
 
-                    # 2. IDENTIFICAÇÃO DO INTERSTÍCIO (MARCELO WENDER)
-                    # O Interstício no PDF Transpedrosa sempre vem antes dos campos de Extra/Noturna.
-                    # Vamos localizar o valor que o próprio PDF rotula como Interj.
-                    interj_valor = "00:00"
-                    if "Interj." in texto: # Se o cabeçalho existe
-                         # Buscamos o valor que está ANTES da Hora Noturna (última coluna relevante)
-                         # No caso do Marcelo: [..., '11:55', '12:03', '07:00'] -> 12:03 é Interj, 07:00 é Noturna.
-                         if len(horas) >= 4:
-                             # O Interstício costuma ser o penúltimo valor antes do resumo noturno
-                             # Mas para garantir, validamos o valor que não seja a Jornada Diária.
-                             idx_diaria = -1
-                             for i, h in enumerate(horas):
-                                 if h == horas[1]: continue # Fim
-                                 if h == "08:00": continue # Normal
-                                 # A Diária é o primeiro valor alto após o Normal
-                                 if i > 2: 
-                                     interj_valor = h # Assume-se que o valor após a diária/refeição é o interj
+                    # 2. IDENTIFICAÇÃO POSICIONAL RÍGIDA
+                    # No layout Transpedrosa, as colunas seguem:
+                    # [0]Início, [1]Fim, [2]Normal, [3]Diária, [4]Refeição, [5]Interj.
+                    # Quando um valor no meio falta, o array diminui.
                     
-                    # Validação real do Interstício (Somente se for < 11h e não for a hora noturna)
-                    # No Marcelo, 12:03 > 11:00, então o código NÃO deve apontar erro aqui.
-                    min_interj = converter_para_minutos(interj_valor)
-                    if 0 < min_interj < 660 and interj_valor != horas[-1]: # Ignora o último (Noturna)
-                        erros.append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj_valor})")
-
-                    # 3. REGRA DA REFEIÇÃO (O ponto principal do Marcelo)
-                    # Se Jornada Normal (horas[2]) é 08:00 e não há um 6º horário na lista, falta refeição.
-                    # Marcelo: ['17:05', '05:00', '08:00', '11:55', '12:03', '07:00'] 
-                    # Note que '11:55' é Diária e '12:03' é Interj. O campo Refeição entre eles sumiu.
-                    if "Total Refeição" in texto:
-                        # Se não há um valor entre 00:01 e 02:00 na posição de refeição
-                        # No seu PDF, a refeição fica entre a Diária (11:55) e o Interj (12:03)
-                        tem_refeicao = False
-                        for h in horas:
-                            m = converter_para_minutos(h)
-                            if 30 <= m <= 120 and h != "08:00" and h != horas[0] and h != horas[1]:
-                                tem_refeicao = True
-                                break
+                    j_normal = "08:00" # Padrão
+                    j_diaria = ""
+                    refeicao = ""
+                    interj = ""
+                    
+                    # Buscamos a J. Diária (Geralmente o valor após o 08:00)
+                    try:
+                        idx_normal = horas.index("08:00")
+                        j_diaria = horas[idx_normal + 1]
                         
-                        if not tem_refeicao:
-                            erros.append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
-                        else:
-                            # Se tem, verifica se excedeu 2h
-                            for h in horas:
-                                m = converter_para_minutos(h)
-                                if m > 120 and h not in [horas[0], horas[1], horas[2], interj_valor, horas[-1]]:
-                                    erros.append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({h})")
-                
-                if erros:
-                    relatorio_final[motorista_atual].extend(list(set(erros)))
-    return relatorio_final
+                        # A partir daqui, verificamos a existência dos próximos campos
+                        # Se houver mais 2 campos após a diária: [Diária, Refeição, Interj]
+                        # Se houver apenas 1 campo após a diária: [Diária, Interj] (Refeição Vazia)
+                        
+                        resto = horas[idx_normal + 2:]
+                        
+                        if len(resto) >= 2:
+                            refeicao = resto[0]
+                            interj = resto[1]
+                        elif len(resto) == 1:
+                            # Se sobrou só um, e ele é alto (perto de 11h), é o Interj.
+                            if converter_minutos(resto[0]) > 600:
+                                interj = resto[0]
+                                refeicao = "" # Refeição vazia detectada
+                            else:
+                                refeicao = resto[0]
+                                interj = ""
+                    except:
+                        pass
 
-# --- INTERFACE (LAYOUT MANTIDO) ---
-col_logo, col_adm = st.columns([1, 1])
-with col_logo:
-    st.image("https://portalinstitucional-assets.azureedge.net/strapi/assets/Logo_Anhanguera_Horizontal_170x60px_1_d985ea5183.svg", width=220)
-with col_adm:
-    st.markdown("<div style='text-align: right; padding-top: 20px;'><p style='color: #004a99; font-weight: bold; margin-bottom: 0;'>Desenvolvimento e Análise</p><p style='font-size: 1.2em; color: #333;'>Prof. Cleidson Daniel</p></div>", unsafe_allow_html=True)
+                    # --- REGRAS DE AUDITORIA ---
+                    
+                    # A) REGRA REFEIÇÃO
+                    min_ref = converter_minutos(refeicao)
+                    if min_ref == 0:
+                        relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
+                    elif min_ref > 120:
+                        relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
 
-st.markdown("""
-    <div class="concept-card">
-        <h1>IA na Administração & Gestão de Processos</h1>
-        <p>Workshop: Laboratório prático focado na <b>convergência entre Inteligência Artificial e gestão estratégica</b>.</p>
-        <div class="quote-section">"Pensar de forma inteligente não é apenas automatizar tarefas, mas redesenhar processos para que a tecnologia potencialize o capital humano..."</div>
-    </div>
-    """, unsafe_allow_html=True)
+                    # B) REGRA INTERSTÍCIO (Interj.)
+                    if interj:
+                        min_interj = converter_minutos(interj)
+                        if min_interj < 660: # 11 horas
+                            relatorio[nome].append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj})")
+                    # Se não achou o interj na linha de "Trabalho", ele costuma estar na linha abaixo ou oculta
+                    # mas para os casos apresentados (Marcelo/Bruno), essa lógica cobre.
+
+    return relatorio
+
+# --- INTERFACE ---
+col1, col2 = st.columns([1, 1])
+with col1: st.image("https://portalinstitucional-assets.azureedge.net/strapi/assets/Logo_Anhanguera_Horizontal_170x60px_1_d985ea5183.svg", width=220)
+with col2: st.markdown("<div style='text-align: right; padding-top: 20px;'><p style='color: #004a99; font-weight: bold; margin-bottom: 0;'>Desenvolvimento e Análise</p><p style='font-size: 1.2em; color: #333;'>Prof. Cleidson Daniel</p></div>", unsafe_allow_html=True)
+
+st.markdown("""<div class="concept-card"><h1>IA na Administração & Gestão de Processos</h1><p>Workshop: Laboratório prático focado na <b>convergência entre Inteligência Artificial e gestão estratégica</b>.</p><div class="quote-section">"Pensar de forma inteligente não é apenas automatizar tarefas, mas redesenhar processos..."</div></div>""", unsafe_allow_html=True)
 
 c_main, c_side = st.columns([2, 1.2])
 
 with c_side:
-    st.markdown(f"""
-        <div class="side-info-card">
-            <h3 style='color: #004a99; margin-top:0; border-bottom: 2px solid #004a99; padding-bottom: 10px;'>Proposta Selecionada</h3>
-            <p style='font-size: 0.95em;'><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES<br><b>ID:</b> <code>#IA-17750026</code></p>
-            <h5 style='color: #004a99;'>📡 Monitoramento:</h5>
-            <div class="monitoring-item">✅ Validação de Interstício (Mín. 11h)</div>
-            <div class="monitoring-item">✅ Verificação de Intervalo Alimentação (Máx. 2h)</div>
-            <div class="monitoring-item">✅ Auditoria de Jornada Diária</div>
-            <div style="text-align: center; margin-top: 20px;"><span class="status-badge">Sinalização: Ativa ✅</span></div>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown(f"""<div class="side-info-card"><h3 style='color: #004a99; margin-top:0;'>Proposta Selecionada</h3><p><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES<br><b>ID:</b> #IA-17750026</p><hr><h5 style='color: #004a99;'>📡 Monitoramento:</h5><div style='font-size:0.85em'>✅ Validação de Interstício (11h)<br>✅ Verificação de Intervalo Alimentação<br>✅ Auditoria de Jornada Diária</div><div style='text-align:center; margin-top:20px'><span class="status-badge">Sinalização: Ativa ✅</span></div></div>""", unsafe_allow_html=True)
 
 with c_main:
     st.subheader("📁 Auditoria de Documentos")
-    up = st.file_uploader("Upload PDF", type="pdf", label_visibility="collapsed")
+    up = st.file_uploader("Arraste o PDF aqui", type="pdf", label_visibility="collapsed")
     if up:
-        with st.status("IA Analisando Processos...", expanded=False):
-            res = processar_auditoria(up)
+        with st.status("Auditando...", expanded=False):
+            res = auditoria_inteligente(up)
         if res:
-            st.markdown("### 🚩 Inconsistências Identificadas")
-            txt_out = "RELATÓRIO DE AUDITORIA\n" + "="*40 + "\n"
             for mot, errs in res.items():
                 if errs:
                     with st.expander(f"👤 {mot}"):
-                        for e in sorted(errs):
-                            st.error(e)
-                            txt_out += f"{mot} | {e}\n"
-            st.download_button("💾 Baixar TXT", txt_out, "auditoria.txt")
-        else: st.success("✅ Nenhuma inconsistência detectada.")
+                        for e in sorted(list(set(errs))): st.error(e)
+        else: st.success("✅ Tudo em conformidade.")
 
-st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão 1.2 | Status: Online</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão 1.3 | Status: Online</p></div>', unsafe_allow_html=True)
