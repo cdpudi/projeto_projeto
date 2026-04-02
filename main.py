@@ -10,16 +10,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- ESTILO CSS AVANÇADO ---
+# --- ESTILO CSS AVANÇADO (MANTIDO) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
-    
     html, body, [class*="css"] { font-family: 'Roboto', sans-serif; }
-    
     .stApp { background-color: #f4f7f6; }
-    
-    /* Card de Metodologia (Topo Azul) */
     .concept-card {
         background: linear-gradient(135deg, #004a99 0%, #002d5f 100%);
         color: white;
@@ -28,7 +24,6 @@ st.markdown("""
         margin-bottom: 2rem;
         box-shadow: 0 10px 20px rgba(0,0,0,0.1);
     }
-    
     .quote-section {
         border-left: 4px solid #ff914d;
         padding-left: 15px;
@@ -36,24 +31,15 @@ st.markdown("""
         color: #e0e0e0;
         margin: 15px 0;
     }
-
-    /* Card Lateral de Status (Branco) - AUMENTADO */
     .side-info-card {
         background-color: white;
-        padding: 30px; /* Aumentado */
-        border-radius: 15px; /* Aumentado */
+        padding: 30px;
+        border-radius: 15px;
         border: 1px solid #e0e0e0;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05); /* Adicionado sombra sutil */
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
         margin-bottom: 1.5rem;
     }
-
-    .monitoring-item {
-        font-size: 0.85em;
-        color: #444;
-        margin: 8px 0;
-    }
-
-    /* Estilo para créditos */
+    .monitoring-item { font-size: 0.85em; color: #444; margin: 8px 0; }
     .footer-credits {
         background-color: #ffffff;
         padding: 1rem;
@@ -62,7 +48,6 @@ st.markdown("""
         text-align: center;
         margin-top: 2rem;
     }
-
     .status-badge {
         padding: 6px 12px;
         border-radius: 20px;
@@ -98,30 +83,60 @@ def processar_auditoria(pdf_file):
                     if motorista_atual not in relatorio_final: relatorio_final[motorista_atual] = []
                     continue
                 if "TT HS" in linha: continue
+                
                 partes = linha.split()
                 if not partes or not regex_data.match(partes[0]): continue
+                
                 data_dia = partes[0]
                 erros = []
+                
                 if "Trabalho" in linha:
                     horarios = re.findall(r"\d{2}:\d{2}", linha)
-                    # Regra de Lançamento (Dia 03/03 Bruno)
+                    
+                    # 1. Regra de Lançamento Início/Fim
                     if len(horarios) < 3:
                         erros.append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO (Início/Fim)")
-                    # Regra Interstício
+                    
+                    # 2. Regra de Intervalo de Alimentação (Refeição)
+                    # No PDF Transpedrosa: Início(2), Fim(3), J.Normal(4), J.Diária(5), Refeição(6)
+                    # Nota: O regex extrai todos os HH:MM. Precisamos validar a posição.
+                    if len(horarios) >= 5:
+                        # Pegamos o valor da Jornada Normal (geralmente 08:00)
+                        minutos_normal = converter_para_minutos(horarios[2]) if len(horarios) > 2 else 0
+                        
+                        # Localizamos o valor da Refeição (Coluna 6 no layout original)
+                        # Como o PDF extrai texto corrido, buscamos o valor após a jornada diária
+                        # Para o Marcelo Wender (01/04), a refeição está vazia
+                        refeicao_str = ""
+                        # Se a linha tem 'Trabalho' mas não tem o horário de refeição preenchido
+                        # ou se o valor extraído na posição de refeição for 00:00
+                        if minutos_normal > 360: # Maior que 6 horas
+                             # Verificamos se há valor de refeição na linha
+                             # No texto extraído, se não houver refeição, o número de horários diminui
+                             if len(horarios) < 6:
+                                 erros.append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO (Jornada > 6h)")
+                             else:
+                                 # Se existe o horário, validamos se é > 2h
+                                 # A refeição costuma ser o 5º ou 6º horário encontrado
+                                 min_ref = converter_para_minutos(horarios[4]) 
+                                 if min_ref > 120:
+                                     erros.append(f"🍱 {data_dia} - INTERVALO REFEIÇÃO EXCEDEU 2H ({horarios[4]})")
+
+                    # 3. Regra Interstício
                     if "Interj" in linha:
                         for p in partes:
                             if ":" in p:
                                 min_p = converter_para_minutos(p)
-                                if 0 < min_p < 660 and p != "08:00" and p != (horarios[0] if horarios else ""):
+                                if 0 < min_p < 660 and p != "08:00" and p not in horarios[:3]:
                                     if partes.index(p) > 6: 
                                         erros.append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({p})")
+                
                 if erros:
                     relatorio_final[motorista_atual].extend(list(set(erros)))
     return relatorio_final
 
-# --- INTERFACE ---
+# --- INTERFACE (LAYOUT MANTIDO) ---
 
-# Coluna de Cabeçalho (Logo + Créditos do Professor)
 header_col1, header_col2 = st.columns([1, 1])
 with header_col1:
     st.image("https://portalinstitucional-assets.azureedge.net/strapi/assets/Logo_Anhanguera_Horizontal_170x60px_1_d985ea5183.svg", width=220)
@@ -131,7 +146,6 @@ with header_col2:
                 <p style='font-size: 1.2em; color: #333;'>Prof. Cleidson Daniel</p>
                 </div>""", unsafe_allow_html=True)
 
-# Card de Conceito IA (Topo)
 st.markdown("""
     <div class="concept-card">
         <h1 style='margin-top:0;'>IA na Administração & Gestão de Processos</h1>
@@ -143,8 +157,6 @@ st.markdown("""
     </div>
     """, unsafe_allow_html=True)
 
-# Grid Central - Área Principal e Lateral Ampliada
-# Aumentei a proporção lateral para 1.2 para expandir o card de status
 col_main, col_side = st.columns([2, 1.2])
 
 with col_side:
@@ -182,20 +194,17 @@ with col_main:
         if resultado:
             st.markdown("### 🚩 Inconsistências Identificadas")
             txt_output = "RELATÓRIO DE AUDITORIA ESTRATÉGICA - IA\n" + "="*50 + "\n"
-            
             for motorista, erros in resultado.items():
                 if erros:
                     with st.expander(f"👤 {motorista}"):
                         for erro in sorted(erros):
                             st.error(erro)
                             txt_output += f"{motorista} | {erro}\n"
-            
-            st.download_button("💾 Exportar Relatório (.txt)", txt_output, "auditoria_ia.txt")
+            st.download_button("💾 Exportar Relatório para Gestão (.txt)", txt_output, "auditoria_ia.txt")
         else:
             st.balloons()
             st.success("✅ Nenhuma inconsistência detectada nos processos auditados.")
 
-# Footer Final
 st.markdown("""
     <div class="footer-credits">
         <p style='margin-bottom:0; font-size: 0.8em; color: #999;'>
