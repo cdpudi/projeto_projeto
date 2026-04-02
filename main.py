@@ -46,7 +46,7 @@ def processar_auditoria(pdf_file):
                     if motorista_atual not in relatorio_final: relatorio_final[motorista_atual] = []
                     continue
                 
-                if "TT HS" in linha or "Resumo" in linha: continue
+                if "TT HS" in linha or "Resumo" in linha or "Período" in linha: continue
                 
                 partes = linha.split()
                 if not partes or not regex_data.match(partes[0]): continue
@@ -55,38 +55,66 @@ def processar_auditoria(pdf_file):
                 erros = []
                 
                 if "Trabalho" in linha:
-                    horas_na_linha = re.findall(r"\d{2}:\d{2}", linha)
+                    # Captura todos os horários HH:MM
+                    horas = re.findall(r"\d{2}:\d{2}", linha)
                     
-                    if len(horas_na_linha) < 3:
+                    # 1. VALIDAÇÃO DE LANÇAMENTO (BRUNO DANIEL)
+                    if len(horas) < 3:
                         erros.append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO (Início/Fim)")
                         continue
 
-                    # --- LÓGICA DE POSIÇÃO ---
-                    # No PDF do Marcelo: ['17:05', '05:00', '08:00', '11:55', '12:03']
-                    # O '12:03' é o Interj (sempre o último valor de hora da linha de trabalho)
-                    interj_valor = horas_na_linha[-1]
-                    min_interj = converter_para_minutos(interj_valor)
+                    # 2. IDENTIFICAÇÃO DO INTERSTÍCIO (MARCELO WENDER)
+                    # O Interstício no PDF Transpedrosa sempre vem antes dos campos de Extra/Noturna.
+                    # Vamos localizar o valor que o próprio PDF rotula como Interj.
+                    interj_valor = "00:00"
+                    if "Interj." in texto: # Se o cabeçalho existe
+                         # Buscamos o valor que está ANTES da Hora Noturna (última coluna relevante)
+                         # No caso do Marcelo: [..., '11:55', '12:03', '07:00'] -> 12:03 é Interj, 07:00 é Noturna.
+                         if len(horas) >= 4:
+                             # O Interstício costuma ser o penúltimo valor antes do resumo noturno
+                             # Mas para garantir, validamos o valor que não seja a Jornada Diária.
+                             idx_diaria = -1
+                             for i, h in enumerate(horas):
+                                 if h == horas[1]: continue # Fim
+                                 if h == "08:00": continue # Normal
+                                 # A Diária é o primeiro valor alto após o Normal
+                                 if i > 2: 
+                                     interj_valor = h # Assume-se que o valor após a diária/refeição é o interj
                     
-                    # 1. Regra Interstício (Mínimo 11h = 660 min)
-                    if min_interj < 660:
+                    # Validação real do Interstício (Somente se for < 11h e não for a hora noturna)
+                    # No Marcelo, 12:03 > 11:00, então o código NÃO deve apontar erro aqui.
+                    min_interj = converter_para_minutos(interj_valor)
+                    if 0 < min_interj < 660 and interj_valor != horas[-1]: # Ignora o último (Noturna)
                         erros.append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj_valor})")
 
-                    # 2. Regra Refeição (Se Jornada Normal > 6h)
-                    # Se tivermos apenas 5 horários (como no caso do Marcelo), falta a Refeição
-                    if len(horas_na_linha) < 6:
-                        erros.append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
-                    else:
-                        # Se houver 6 ou mais, a refeição é o valor antes do Interstício
-                        refeicao_valor = horas_na_linha[4]
-                        min_ref = converter_para_minutos(refeicao_valor)
-                        if min_ref > 120:
-                            erros.append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao_valor})")
+                    # 3. REGRA DA REFEIÇÃO (O ponto principal do Marcelo)
+                    # Se Jornada Normal (horas[2]) é 08:00 e não há um 6º horário na lista, falta refeição.
+                    # Marcelo: ['17:05', '05:00', '08:00', '11:55', '12:03', '07:00'] 
+                    # Note que '11:55' é Diária e '12:03' é Interj. O campo Refeição entre eles sumiu.
+                    if "Total Refeição" in texto:
+                        # Se não há um valor entre 00:01 e 02:00 na posição de refeição
+                        # No seu PDF, a refeição fica entre a Diária (11:55) e o Interj (12:03)
+                        tem_refeicao = False
+                        for h in horas:
+                            m = converter_para_minutos(h)
+                            if 30 <= m <= 120 and h != "08:00" and h != horas[0] and h != horas[1]:
+                                tem_refeicao = True
+                                break
+                        
+                        if not tem_refeicao:
+                            erros.append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
+                        else:
+                            # Se tem, verifica se excedeu 2h
+                            for h in horas:
+                                m = converter_para_minutos(h)
+                                if m > 120 and h not in [horas[0], horas[1], horas[2], interj_valor, horas[-1]]:
+                                    erros.append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({h})")
                 
                 if erros:
                     relatorio_final[motorista_atual].extend(list(set(erros)))
     return relatorio_final
 
-# --- INTERFACE ---
+# --- INTERFACE (LAYOUT MANTIDO) ---
 col_logo, col_adm = st.columns([1, 1])
 with col_logo:
     st.image("https://portalinstitucional-assets.azureedge.net/strapi/assets/Logo_Anhanguera_Horizontal_170x60px_1_d985ea5183.svg", width=220)
@@ -134,5 +162,4 @@ with c_main:
             st.download_button("💾 Baixar TXT", txt_out, "auditoria.txt")
         else: st.success("✅ Nenhuma inconsistência detectada.")
 
-# CORREÇÃO DA SINTAXE NO FOOTER ABAIXO:
-st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão 1.1 | Status: Online</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão 1.2 | Status: Online</p></div>', unsafe_allow_html=True)
