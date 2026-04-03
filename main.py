@@ -31,40 +31,44 @@ def conv_min(h):
         return 0
 
 
+# 🔥 EXTRAÇÃO INTELIGENTE (CORRIGIDA)
 def extrair_campos_dinamico(row):
     linha = " ".join([str(c) for c in row if c])
-
     horarios = re.findall(r"\d{2}:\d{2}", linha)
 
     inicio, fim = "", ""
     diaria, refeicao, interj = "", "", ""
 
-    # Início e Fim
+    # Início/Fim
     if len(horarios) >= 2:
         inicio, fim = horarios[0], horarios[1]
 
-    # Encontrar jornada padrão
+    # Localizar jornada padrão
     if "08:00" in horarios:
         idx = horarios.index("08:00")
 
         if len(horarios) > idx + 1:
             diaria = horarios[idx + 1]
 
-        if len(horarios) > idx + 2:
-            prox = horarios[idx + 2]
+        candidatos = horarios[idx+2:]
 
-            # Refeição
-            if conv_min(prox) <= 120:
-                refeicao = prox
-                if len(horarios) > idx + 3:
-                    interj = horarios[idx + 3]
-            else:
-                refeicao = ""
-                interj = prox
+        for h in candidatos:
+            minutos = conv_min(h)
+
+            # 🍱 Refeição (30min até 2h30)
+            if 30 <= minutos <= 150 and refeicao == "":
+                refeicao = h
+                continue
+
+            # ⏱️ Interstício (>= 11h)
+            if minutos >= 660:
+                interj = h
+                break
 
     return inicio, fim, diaria, refeicao, interj
 
 
+# 🔍 AUDITORIA FINAL
 def auditoria_final(pdf_file):
     relatorio = {}
 
@@ -120,36 +124,37 @@ def auditoria_final(pdf_file):
     return relatorio
 
 
-# --- LAYOUT (INALTERADO) ---
+# --- LAYOUT ORIGINAL ---
 col_logo, col_adm = st.columns([1, 1])
+
 with col_logo:
     st.image("https://portalinstitucional-assets.azureedge.net/strapi/assets/Logo_Anhanguera_Horizontal_170x60px_1_d985ea5183.svg", width=220)
 
 with col_adm:
-    st.markdown("<div style='text-align: right; padding-top: 20px;'><p style='color: #004a99; font-weight: bold; margin-bottom: 0;'>Desenvolvimento e Análise</p><p style='font-size: 1.2em; color: #333;'>Prof. Cleidson Daniel</p></div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: right; padding-top: 20px;'><p style='color: #004a99; font-weight: bold;'>Desenvolvimento e Análise</p><p style='font-size: 1.2em;'>Prof. Cleidson Daniel</p></div>", unsafe_allow_html=True)
 
 st.markdown("""
     <div class="concept-card">
         <h1>IA na Administração & Gestão de Processos</h1>
-        <p>Workshop: Laboratório prático focado na <b>convergência entre Inteligência Artificial e gestão estratégica</b>.</p>
-        <div class="quote-section">"Pensar de forma inteligente não é apenas automatizar tarefas, mas redesenhar processos para que a tecnologia potencialize o capital humano..."</div>
+        <p>Workshop: convergência entre IA e gestão estratégica.</p>
+        <div class="quote-section">"Automatizar é redesenhar processos com inteligência."</div>
     </div>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 c_main, c_side = st.columns([2, 1.2])
 
 with c_side:
-    st.markdown(f"""
+    st.markdown("""
         <div class="side-info-card">
-            <h3 style='color: #004a99; margin-top:0; border-bottom: 2px solid #004a99; padding-bottom: 10px;'>Proposta Selecionada</h3>
-            <p style='font-size: 0.95em;'><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES<br><b>ID:</b> <code>#IA-17750026</code></p>
-            <h5 style='color: #004a99;'>📡 Monitoramento:</h5>
-            <div class="monitoring-item">✅ Validação de Interstício (Mín. 11h)</div>
-            <div class="monitoring-item">✅ Verificação de Intervalo Alimentação (Máx. 2h)</div>
-            <div class="monitoring-item">✅ Auditoria de Lançamentos Inexistentes</div>
-            <div style="text-align: center; margin-top: 20px;"><span class="status-badge">Sinalização: Ativa ✅</span></div>
+            <h3 style='color:#004a99;'>Monitoramento</h3>
+            <div class="monitoring-item">✅ Interstício ≥ 11h</div>
+            <div class="monitoring-item">✅ Refeição ≤ 2h</div>
+            <div class="monitoring-item">✅ Falta de batida</div>
+            <div style="text-align:center;margin-top:10px;">
+                <span class="status-badge">Ativo</span>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 with c_main:
     st.subheader("📁 Auditoria de Documentos")
@@ -159,16 +164,14 @@ with c_main:
         with st.status("Processando Auditoria...", expanded=False):
             res = auditoria_final(up)
 
-        if res:
-            st.markdown("### 🚩 Inconsistências Identificadas")
-            for mot, errs in res.items():
-                if errs:
-                    with st.expander(f"👤 {mot}"):
-                        for e in sorted(list(set(errs))):
-                            st.error(e)
-                else:
-                    st.success(f"👤 {mot} - Em conformidade")
-        else:
-            st.success("✅ Nenhuma inconsistência detectada.")
+        st.markdown("### 🚩 Inconsistências Identificadas")
 
-st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão Final | Status: Online</p></div>', unsafe_allow_html=True)
+        for mot, errs in res.items():
+            if errs:
+                with st.expander(f"👤 {mot}"):
+                    for e in sorted(list(set(errs))):
+                        st.error(e)
+            else:
+                st.success(f"👤 {mot} - Em conformidade")
+
+st.markdown('<div class="footer-credits">Sistema de Auditoria Inteligente</div>', unsafe_allow_html=True)
