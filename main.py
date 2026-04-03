@@ -5,7 +5,7 @@ import re
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="IA na Gestão de Processos", page_icon="🤖", layout="wide")
 
-# --- ESTILO CSS ORIGINAL APROVADO ---
+# --- ESTILO CSS ORIGINAL ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
@@ -31,15 +31,17 @@ def conv_min(h):
         return 0
 
 
-# 🔥 EXTRAÇÃO CORRIGIDA (USA INTERJ REAL)
+# 🔥 EXTRAÇÃO CORRETA BASEADA NA TABELA
 def extrair_campos_dinamico(row):
+
+    # Junta linha
     linha = " ".join([str(c) for c in row if c])
     horarios = re.findall(r"\d{2}:\d{2}", linha)
 
     inicio, fim = "", ""
     diaria, refeicao, interj = "", "", ""
 
-    # Início e Fim
+    # Início/Fim
     if len(horarios) >= 2:
         inicio, fim = horarios[0], horarios[1]
 
@@ -49,10 +51,17 @@ def extrair_campos_dinamico(row):
         if len(horarios) > idx + 1:
             diaria = horarios[idx + 1]
 
-    # ✅ INTERSTÍCIO REAL (coluna Interj)
-    interj_candidatos = [h for h in horarios if conv_min(h) >= 600]
-    if interj_candidatos:
-        interj = interj_candidatos[-1]
+    # 🔥 INTERJ REAL → pegar ÚLTIMO horário da linha antes de extras
+    # Estratégia: pegar o MAIOR horário coerente entre 10h e 24h
+    candidatos_interj = []
+
+    for h in horarios:
+        m = conv_min(h)
+        if 600 <= m <= 1440:  # entre 10h e 24h
+            candidatos_interj.append(h)
+
+    if candidatos_interj:
+        interj = candidatos_interj[-1]  # último válido
 
     # 🍱 Refeição
     for h in horarios:
@@ -64,7 +73,7 @@ def extrair_campos_dinamico(row):
     return inicio, fim, diaria, refeicao, interj
 
 
-# 🔍 AUDITORIA FINAL
+# 🔍 AUDITORIA
 def auditoria_final(pdf_file):
     relatorio = {}
 
@@ -72,7 +81,6 @@ def auditoria_final(pdf_file):
         for page in pdf.pages:
             texto = page.extract_text()
 
-            # Nome do motorista
             func_match = re.search(r"Funcionário:\s*(.*?)(?=Admissão|CPF|$)", texto)
             nome = func_match.group(1).strip() if func_match else "Desconhecido"
 
@@ -96,7 +104,7 @@ def auditoria_final(pdf_file):
 
                     inicio, fim, diaria, refeicao, interj = extrair_campos_dinamico(row)
 
-                    # 🚨 FALTA DE LANÇAMENTO
+                    # 🚨 FALTA
                     if not inicio or not fim:
                         relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO")
                         continue
@@ -110,8 +118,8 @@ def auditoria_final(pdf_file):
                         elif m_ref > 120:
                             relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
 
-                    # ⏱️ INTERSTÍCIO (REGRA PRINCIPAL)
-                    if interj and ":" in interj:
+                    # ⏱️ INTERSTÍCIO REAL
+                    if interj:
                         m_int = conv_min(interj)
 
                         if 0 < m_int < 660:
@@ -120,7 +128,7 @@ def auditoria_final(pdf_file):
     return relatorio
 
 
-# --- INTERFACE (LAYOUT ORIGINAL PRESERVADO) ---
+# --- LAYOUT ORIGINAL (INALTERADO) ---
 col_logo, col_adm = st.columns([1, 1])
 with col_logo:
     st.image("https://portalinstitucional-assets.azureedge.net/strapi/assets/Logo_Anhanguera_Horizontal_170x60px_1_d985ea5183.svg", width=220)
@@ -141,15 +149,15 @@ c_main, c_side = st.columns([2, 1.2])
 with c_side:
     st.markdown(f"""
         <div class="side-info-card">
-            <h3 style='color: #004a99; margin-top:0; border-bottom: 2px solid #004a99; padding-bottom: 10px;'>Proposta Selecionada</h3>
-            <p style='font-size: 0.95em;'><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES<br><b>ID:</b> <code>#IA-17750026</code></p>
-            <h5 style='color: #004a99;'>📡 Monitoramento:</h5>
-            <div class="monitoring-item">✅ Validação de Interstício (Mín. 11h)</div>
-            <div class="monitoring-item">✅ Verificação de Intervalo Alimentação (Máx. 2h)</div>
-            <div class="monitoring-item">✅ Auditoria de Lançamentos Inexistentes</div>
-            <div style="text-align: center; margin-top: 20px;"><span class="status-badge">Sinalização: Ativa ✅</span></div>
+            <h3 style='color: #004a99;'>Monitoramento</h3>
+            <div class="monitoring-item">✅ Interstício ≥ 11h</div>
+            <div class="monitoring-item">✅ Refeição ≤ 2h</div>
+            <div class="monitoring-item">✅ Falta de batida</div>
+            <div style="text-align:center;margin-top:10px;">
+                <span class="status-badge">Ativo</span>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 with c_main:
     st.subheader("📁 Auditoria de Documentos")
@@ -168,7 +176,5 @@ with c_main:
                             st.error(e)
                 else:
                     st.success(f"👤 {mot} - Em conformidade")
-        else:
-            st.success("✅ Nenhuma inconsistência detectada nos dias com jornada.")
 
-st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão Final | Status: Online</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-credits">Sistema de Auditoria Inteligente</div>', unsafe_allow_html=True)
