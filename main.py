@@ -5,7 +5,7 @@ import re
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="IA na Gestão de Processos", page_icon="🤖", layout="wide")
 
-# --- ESTILO CSS ORIGINAL APROVADO ---
+# --- ESTILO CSS ORIGINAL ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
@@ -25,35 +25,37 @@ def conv_min(h):
     if not h or h == "" or h == "00:00":
         return 0
     try:
-        partes = str(h).strip().split(':')
-        return int(partes[0]) * 60 + int(partes[1])
+        h, m = h.split(":")
+        return int(h) * 60 + int(m)
     except:
         return 0
 
 
-# 🔥 INTERJ CORRETO (ÚLTIMO HORÁRIO GRANDE DA LINHA)
-def extrair_interj_dinamico(row):
-    valores = [str(c).strip() for c in row if c]
-    horarios = [v for v in valores if re.match(r"\d{2}:\d{2}", v)]
+# 🔥 EXTRAÇÃO CORRETA (BASEADA NA POSIÇÃO REAL DO PDF)
+def extrair_dados_linha(row):
+    linha = " ".join([str(c) for c in row if c])
+    horarios = re.findall(r"\d{2}:\d{2}", linha)
 
-    candidatos = []
-    for h in horarios:
-        m = conv_min(h)
-        if 600 <= m <= 900:
-            candidatos.append(h)
-
-    return candidatos[-1] if candidatos else ""
-
-
-# 🔥 NOVO: INÍCIO/FIM ROBUSTO
-def extrair_inicio_fim(row):
-    valores = [str(c).strip() for c in row if c]
-    horarios = [v for v in valores if re.match(r"\d{2}:\d{2}", v)]
+    inicio, fim = "", ""
+    diaria, refeicao, interj = "", "", ""
 
     if len(horarios) >= 2:
-        return horarios[0], horarios[1]
+        inicio, fim = horarios[0], horarios[1]
 
-    return "", ""
+    if "08:00" in horarios:
+        idx = horarios.index("08:00")
+
+        if len(horarios) > idx + 1:
+            diaria = horarios[idx + 1]
+
+        if len(horarios) > idx + 2:
+            refeicao = horarios[idx + 2]
+
+        # 🔥 INTERJ REAL (posição fixa após refeição)
+        if len(horarios) > idx + 3:
+            interj = horarios[idx + 3]
+
+    return inicio, fim, diaria, refeicao, interj
 
 
 def auditoria_final_v10(pdf_file):
@@ -79,42 +81,39 @@ def auditoria_final_v10(pdf_file):
                     data_dia = row[0].split()[0]
                     tipo = str(row[1]).strip()
 
-                    if "Trabalho" in tipo:
+                    if "Trabalho" not in tipo:
+                        continue
 
-                        # 🔥 CORRIGIDO
-                        inicio, fim = extrair_inicio_fim(row)
-                        inicio_fim_valido = bool(inicio and fim)
+                    # 🔥 EXTRAÇÃO CORRETA
+                    inicio, fim, diaria, refeicao, interj = extrair_dados_linha(row)
+                    inicio_fim_valido = bool(inicio and fim)
 
-                        j_normal = str(row[3]).strip() if len(row) > 3 else "00:00"
-                        refeicao = str(row[5]).strip() if len(row) > 5 else ""
+                    j_normal = "08:00"
 
-                        interj = extrair_interj_dinamico(row)
+                    # 🚨 FALTA DE LANÇAMENTO
+                    if not inicio_fim_valido:
+                        relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO")
+                        continue
 
-                        # 🚨 FALTA DE LANÇAMENTO (AGORA CORRETO)
-                        if not inicio_fim_valido:
-                            relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO")
-                            continue
+                    # 🍱 REFEIÇÃO
+                    m_ref = conv_min(refeicao)
 
-                        # 🍱 REFEIÇÃO
-                        if conv_min(j_normal) >= 480:
-                            m_ref = conv_min(refeicao)
+                    if m_ref == 0:
+                        relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
+                    elif m_ref > 120:
+                        relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
 
-                            if m_ref == 0:
-                                relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
-                            elif m_ref > 120:
-                                relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
+                    # ⏱️ INTERSTÍCIO (AGORA CORRETO)
+                    if interj:
+                        m_int = conv_min(interj)
 
-                        # ⏱️ INTERSTÍCIO (FINAL CORRETO)
-                        if interj:
-                            m_int = conv_min(interj)
-
-                            if 0 < m_int < 660:
-                                relatorio[nome].append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj})")
+                        if 0 < m_int < 660:
+                            relatorio[nome].append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj})")
 
     return relatorio
 
 
-# --- INTERFACE (INALTERADA) ---
+# --- LAYOUT ORIGINAL (INALTERADO) ---
 col_logo, col_adm = st.columns([1, 1])
 
 with col_logo:
