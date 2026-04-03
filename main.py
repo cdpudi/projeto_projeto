@@ -5,7 +5,7 @@ import re
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="IA na Gestão de Processos", page_icon="🤖", layout="wide")
 
-# --- ESTILO CSS ORIGINAL APROVADO ---
+# --- ESTILO CSS ORIGINAL ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
@@ -20,77 +20,111 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# --- FUNÇÕES AUXILIARES ---
 def conv_min(h):
-    if not h or h == "" or h == "00:00": return 0
+    if not h or h == "" or h == "00:00":
+        return 0
     try:
-        partes = str(h).strip().split(':')
-        return int(partes[0]) * 60 + int(partes[1])
-    except: return 0
+        h, m = h.split(":")
+        return int(h) * 60 + int(m)
+    except:
+        return 0
 
-def auditoria_final_v10(pdf_file):
+
+def extrair_campos_dinamico(row):
+    linha = " ".join([str(c) for c in row if c])
+
+    horarios = re.findall(r"\d{2}:\d{2}", linha)
+
+    inicio, fim = "", ""
+    diaria, refeicao, interj = "", "", ""
+
+    # Início e Fim
+    if len(horarios) >= 2:
+        inicio, fim = horarios[0], horarios[1]
+
+    # Encontrar jornada padrão
+    if "08:00" in horarios:
+        idx = horarios.index("08:00")
+
+        if len(horarios) > idx + 1:
+            diaria = horarios[idx + 1]
+
+        if len(horarios) > idx + 2:
+            prox = horarios[idx + 2]
+
+            # Refeição
+            if conv_min(prox) <= 120:
+                refeicao = prox
+                if len(horarios) > idx + 3:
+                    interj = horarios[idx + 3]
+            else:
+                refeicao = ""
+                interj = prox
+
+    return inicio, fim, diaria, refeicao, interj
+
+
+def auditoria_final(pdf_file):
     relatorio = {}
+
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             texto = page.extract_text()
-            # Identificação do Motorista
+
+            # Nome do motorista
             func_match = re.search(r"Funcionário:\s*(.*?)(?=Admissão|CPF|$)", texto)
             nome = func_match.group(1).strip() if func_match else "Desconhecido"
-            if nome not in relatorio: relatorio[nome] = []
 
-            # Extração de tabela para manter a integridade das colunas
+            if nome not in relatorio:
+                relatorio[nome] = []
+
             table = page.extract_table()
-            if not table: continue
+            if not table:
+                continue
 
             for row in table:
-                # Filtrar linhas que começam com Data (DD/MM/YY)
-                if row[0] and re.match(r"^\d{2}/\d{2}/\d{2}", row[0]):
+                if not row or not row[0]:
+                    continue
+
+                if re.match(r"^\d{2}/\d{2}/\d{2}", str(row[0])):
                     data_dia = row[0].split()[0]
                     tipo = str(row[1]).strip()
-                    
-                    if "Trabalho" in tipo:
-                        # MAPEAMENTO REAL BASEADO NO PDF TRANSPEDROSA:
-                        # col[2]: Jornada Início/Fim
-                        # col[3]: Jornada Normal (08:00)
-                        # col[4]: Jornada Diária
-                        # col[5]: Total Refeição
-                        # col[7]: Faltas
-                        # col[8]: Interj. (Interstício)
-                        
-                        inicio_fim = str(row[2]).strip() if len(row) > 2 else ""
-                        j_normal = str(row[3]).strip() if len(row) > 3 else "00:00"
-                        refeicao = str(row[5]).strip() if len(row) > 5 else ""
-                        faltas = str(row[7]).strip() if len(row) > 7 else ""
-                        interj = str(row[8]).strip() if len(row) > 8 else ""
 
-                        # CRITÉRIO DEFINITIVO - BRUNO 03/03 e GERALDO 04/03:
-                        # Se não há batida no Início/Fim (vazio ou só espaços) e o tipo é Trabalho
-                        if not inicio_fim or len(re.findall(r"\d{2}:\d{2}", inicio_fim)) < 2:
-                            relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO (Início/Fim não registrados)")
-                            continue
+                    if "Trabalho" not in tipo:
+                        continue
 
-                        # Se chegou aqui, o motorista trabalhou e registrou pontos. Auditamos:
+                    inicio, fim, diaria, refeicao, interj = extrair_campos_dinamico(row)
 
-                        # 1. VALIDAÇÃO REFEIÇÃO (Mínimo 1h, Máximo 2h se Normal=08:00)
-                        if conv_min(j_normal) >= 480: # Se jornada prevista é 8h
-                            m_ref = conv_min(refeicao)
-                            if m_ref == 0:
-                                relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
-                            elif m_ref > 120:
-                                relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
+                    # 🚨 FALTA DE LANÇAMENTO
+                    if not inicio or not fim:
+                        relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO")
+                        continue
 
-                        # 2. VALIDAÇÃO INTERSTÍCIO (Interj.)
-                        # 12:03 é maior que 11h, então NÃO deve sinalizar erro.
-                        if interj and ":" in interj:
-                            m_int = conv_min(interj)
-                            if 0 < m_int < 660: # Menor que 11 horas
-                                relatorio[nome].append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj})")
+                    # 🍱 REFEIÇÃO
+                    if diaria:
+                        m_ref = conv_min(refeicao)
+
+                        if m_ref == 0:
+                            relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
+                        elif m_ref > 120:
+                            relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
+
+                    # ⏱️ INTERSTÍCIO
+                    if interj and ":" in interj:
+                        m_int = conv_min(interj)
+
+                        if 0 < m_int < 660:
+                            relatorio[nome].append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj})")
 
     return relatorio
 
-# --- INTERFACE (LAYOUT PRESERVADO) ---
+
+# --- LAYOUT (INALTERADO) ---
 col_logo, col_adm = st.columns([1, 1])
 with col_logo:
     st.image("https://portalinstitucional-assets.azureedge.net/strapi/assets/Logo_Anhanguera_Horizontal_170x60px_1_d985ea5183.svg", width=220)
+
 with col_adm:
     st.markdown("<div style='text-align: right; padding-top: 20px;'><p style='color: #004a99; font-weight: bold; margin-bottom: 0;'>Desenvolvimento e Análise</p><p style='font-size: 1.2em; color: #333;'>Prof. Cleidson Daniel</p></div>", unsafe_allow_html=True)
 
@@ -120,9 +154,11 @@ with c_side:
 with c_main:
     st.subheader("📁 Auditoria de Documentos")
     up = st.file_uploader("Upload PDF", type="pdf", label_visibility="collapsed")
+
     if up:
         with st.status("Processando Auditoria...", expanded=False):
-            res = auditoria_final_v10(up)
+            res = auditoria_final(up)
+
         if res:
             st.markdown("### 🚩 Inconsistências Identificadas")
             for mot, errs in res.items():
@@ -130,7 +166,9 @@ with c_main:
                     with st.expander(f"👤 {mot}"):
                         for e in sorted(list(set(errs))):
                             st.error(e)
+                else:
+                    st.success(f"👤 {mot} - Em conformidade")
         else:
-            st.success("✅ Nenhuma inconsistência detectada nos dias com jornada.")
+            st.success("✅ Nenhuma inconsistência detectada.")
 
 st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão Final | Status: Online</p></div>', unsafe_allow_html=True)
