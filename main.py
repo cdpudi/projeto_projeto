@@ -5,7 +5,7 @@ import re
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="IA na Gestão de Processos", page_icon="🤖", layout="wide")
 
-# --- ESTILO CSS ORIGINAL ---
+# --- ESTILO CSS ORIGINAL APROVADO ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
@@ -25,62 +25,34 @@ def conv_min(h):
     if not h or h == "" or h == "00:00":
         return 0
     try:
-        h, m = h.split(":")
-        return int(h) * 60 + int(m)
+        partes = str(h).strip().split(':')
+        return int(partes[0]) * 60 + int(partes[1])
     except:
         return 0
 
 
-# 🔥 EXTRAÇÃO CORRETA BASEADA NA TABELA
-def extrair_campos_dinamico(row):
+# 🔥 FUNÇÃO CORRIGIDA (INTERJ DINÂMICO REAL)
+def extrair_interj_dinamico(row):
+    valores = [str(c).strip() for c in row if c]
+    horarios = [v for v in valores if re.match(r"\d{2}:\d{2}", v)]
 
-    # Junta linha
-    linha = " ".join([str(c) for c in row if c])
-    horarios = re.findall(r"\d{2}:\d{2}", linha)
-
-    inicio, fim = "", ""
-    diaria, refeicao, interj = "", "", ""
-
-    # Início/Fim
-    if len(horarios) >= 2:
-        inicio, fim = horarios[0], horarios[1]
-
-    # Jornada diária
-    if "08:00" in horarios:
-        idx = horarios.index("08:00")
-        if len(horarios) > idx + 1:
-            diaria = horarios[idx + 1]
-
-    # 🔥 INTERJ REAL → pegar ÚLTIMO horário da linha antes de extras
-    # Estratégia: pegar o MAIOR horário coerente entre 10h e 24h
-    candidatos_interj = []
-
+    candidatos = []
     for h in horarios:
         m = conv_min(h)
-        if 600 <= m <= 1440:  # entre 10h e 24h
-            candidatos_interj.append(h)
+        if 600 <= m <= 900:  # faixa real do interstício (10h a 15h)
+            candidatos.append(h)
 
-    if candidatos_interj:
-        interj = candidatos_interj[-1]  # último válido
-
-    # 🍱 Refeição
-    for h in horarios:
-        m = conv_min(h)
-        if 30 <= m <= 180 and h != interj:
-            refeicao = h
-            break
-
-    return inicio, fim, diaria, refeicao, interj
+    return candidatos[-1] if candidatos else ""
 
 
-# 🔍 AUDITORIA
-def auditoria_final(pdf_file):
+def auditoria_final_v10(pdf_file):
     relatorio = {}
 
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             texto = page.extract_text()
 
+            # Nome do motorista
             func_match = re.search(r"Funcionário:\s*(.*?)(?=Admissão|CPF|$)", texto)
             nome = func_match.group(1).strip() if func_match else "Desconhecido"
 
@@ -92,44 +64,47 @@ def auditoria_final(pdf_file):
                 continue
 
             for row in table:
-                if not row or not row[0]:
-                    continue
+                if row[0] and re.match(r"^\d{2}/\d{2}/\d{2}", row[0]):
 
-                if re.match(r"^\d{2}/\d{2}/\d{2}", str(row[0])):
                     data_dia = row[0].split()[0]
                     tipo = str(row[1]).strip()
 
-                    if "Trabalho" not in tipo:
-                        continue
+                    if "Trabalho" in tipo:
 
-                    inicio, fim, diaria, refeicao, interj = extrair_campos_dinamico(row)
+                        inicio_fim = str(row[2]).strip() if len(row) > 2 else ""
+                        j_normal = str(row[3]).strip() if len(row) > 3 else "00:00"
+                        refeicao = str(row[5]).strip() if len(row) > 5 else ""
 
-                    # 🚨 FALTA
-                    if not inicio or not fim:
-                        relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO")
-                        continue
+                        # 🔥 INTERJ CORRIGIDO
+                        interj = extrair_interj_dinamico(row)
 
-                    # 🍱 REFEIÇÃO
-                    if diaria:
-                        m_ref = conv_min(refeicao)
+                        # 🚨 FALTA DE LANÇAMENTO
+                        if not inicio_fim or len(re.findall(r"\d{2}:\d{2}", inicio_fim)) < 2:
+                            relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO")
+                            continue
 
-                        if m_ref == 0:
-                            relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
-                        elif m_ref > 120:
-                            relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
+                        # 🍱 REFEIÇÃO
+                        if conv_min(j_normal) >= 480:
+                            m_ref = conv_min(refeicao)
 
-                    # ⏱️ INTERSTÍCIO REAL
-                    if interj:
-                        m_int = conv_min(interj)
+                            if m_ref == 0:
+                                relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
+                            elif m_ref > 120:
+                                relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
 
-                        if 0 < m_int < 660:
-                            relatorio[nome].append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj})")
+                        # ⏱️ INTERSTÍCIO (AGORA CORRETO)
+                        if interj:
+                            m_int = conv_min(interj)
+
+                            if 0 < m_int < 660:
+                                relatorio[nome].append(f"⏱️ {data_dia} - INTERSTÍCIO REDUZIDO ({interj})")
 
     return relatorio
 
 
-# --- LAYOUT ORIGINAL (INALTERADO) ---
+# --- INTERFACE (LAYOUT ORIGINAL PRESERVADO) ---
 col_logo, col_adm = st.columns([1, 1])
+
 with col_logo:
     st.image("https://portalinstitucional-assets.azureedge.net/strapi/assets/Logo_Anhanguera_Horizontal_170x60px_1_d985ea5183.svg", width=220)
 
@@ -149,15 +124,15 @@ c_main, c_side = st.columns([2, 1.2])
 with c_side:
     st.markdown(f"""
         <div class="side-info-card">
-            <h3 style='color: #004a99;'>Monitoramento</h3>
-            <div class="monitoring-item">✅ Interstício ≥ 11h</div>
-            <div class="monitoring-item">✅ Refeição ≤ 2h</div>
-            <div class="monitoring-item">✅ Falta de batida</div>
-            <div style="text-align:center;margin-top:10px;">
-                <span class="status-badge">Ativo</span>
-            </div>
+            <h3 style='color: #004a99; margin-top:0; border-bottom: 2px solid #004a99; padding-bottom: 10px;'>Proposta Selecionada</h3>
+            <p style='font-size: 0.95em;'><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES<br><b>ID:</b> <code>#IA-17750026</code></p>
+            <h5 style='color: #004a99;'>📡 Monitoramento:</h5>
+            <div class="monitoring-item">✅ Validação de Interstício (Mín. 11h)</div>
+            <div class="monitoring-item">✅ Verificação de Intervalo Alimentação (Máx. 2h)</div>
+            <div class="monitoring-item">✅ Auditoria de Lançamentos Inexistentes</div>
+            <div style="text-align: center; margin-top: 20px;"><span class="status-badge">Sinalização: Ativa ✅</span></div>
         </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
 with c_main:
     st.subheader("📁 Auditoria de Documentos")
@@ -165,7 +140,7 @@ with c_main:
 
     if up:
         with st.status("Processando Auditoria...", expanded=False):
-            res = auditoria_final(up)
+            res = auditoria_final_v10(up)
 
         if res:
             st.markdown("### 🚩 Inconsistências Identificadas")
@@ -176,5 +151,7 @@ with c_main:
                             st.error(e)
                 else:
                     st.success(f"👤 {mot} - Em conformidade")
+        else:
+            st.success("✅ Nenhuma inconsistência detectada nos dias com jornada.")
 
-st.markdown('<div class="footer-credits">Sistema de Auditoria Inteligente</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão Final | Status: Online</p></div>', unsafe_allow_html=True)
