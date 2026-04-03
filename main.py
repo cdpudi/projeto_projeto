@@ -31,7 +31,7 @@ def conv_min(h):
         return 0
 
 
-# 🔥 EXTRAÇÃO CORRETA (BASEADA NA POSIÇÃO REAL DO PDF)
+# 🔥 EXTRAÇÃO FINAL DEFINITIVA
 def extrair_dados_linha(row):
     linha = " ".join([str(c) for c in row if c])
     horarios = re.findall(r"\d{2}:\d{2}", linha)
@@ -45,15 +45,29 @@ def extrair_dados_linha(row):
     if "08:00" in horarios:
         idx = horarios.index("08:00")
 
+        # Jornada diária
         if len(horarios) > idx + 1:
             diaria = horarios[idx + 1]
 
-        if len(horarios) > idx + 2:
-            refeicao = horarios[idx + 2]
+        encontrou_refeicao = False
 
-        # 🔥 INTERJ REAL (posição fixa após refeição)
-        if len(horarios) > idx + 3:
-            interj = horarios[idx + 3]
+        for h in horarios[idx + 2:]:
+            m = conv_min(h)
+
+            # 🍱 Refeição
+            if 30 <= m <= 150 and not encontrou_refeicao:
+                refeicao = h
+                encontrou_refeicao = True
+                continue
+
+            # 🔥 Ignora repouso (valores pequenos após refeição)
+            if encontrou_refeicao and m < 60:
+                continue
+
+            # ⏱️ Interj real
+            if m >= 660:
+                interj = h
+                break
 
     return inicio, fim, diaria, refeicao, interj
 
@@ -84,11 +98,8 @@ def auditoria_final_v10(pdf_file):
                     if "Trabalho" not in tipo:
                         continue
 
-                    # 🔥 EXTRAÇÃO CORRETA
                     inicio, fim, diaria, refeicao, interj = extrair_dados_linha(row)
                     inicio_fim_valido = bool(inicio and fim)
-
-                    j_normal = "08:00"
 
                     # 🚨 FALTA DE LANÇAMENTO
                     if not inicio_fim_valido:
@@ -96,14 +107,12 @@ def auditoria_final_v10(pdf_file):
                         continue
 
                     # 🍱 REFEIÇÃO
-                    m_ref = conv_min(refeicao)
-
-                    if m_ref == 0:
+                    if not refeicao:
                         relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
-                    elif m_ref > 120:
+                    elif conv_min(refeicao) > 120:
                         relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
 
-                    # ⏱️ INTERSTÍCIO (AGORA CORRETO)
+                    # ⏱️ INTERSTÍCIO
                     if interj:
                         m_int = conv_min(interj)
 
