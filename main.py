@@ -31,7 +31,7 @@ def conv_min(h):
         return 0
 
 
-# 🔥 FUNÇÃO CORRIGIDA (INTERJ DINÂMICO REAL)
+# 🔥 INTERJ CORRETO (ÚLTIMO HORÁRIO GRANDE DA LINHA)
 def extrair_interj_dinamico(row):
     valores = [str(c).strip() for c in row if c]
     horarios = [v for v in valores if re.match(r"\d{2}:\d{2}", v)]
@@ -39,10 +39,21 @@ def extrair_interj_dinamico(row):
     candidatos = []
     for h in horarios:
         m = conv_min(h)
-        if 600 <= m <= 900:  # faixa real do interstício (10h a 15h)
+        if 600 <= m <= 900:
             candidatos.append(h)
 
     return candidatos[-1] if candidatos else ""
+
+
+# 🔥 NOVO: INÍCIO/FIM ROBUSTO
+def extrair_inicio_fim(row):
+    valores = [str(c).strip() for c in row if c]
+    horarios = [v for v in valores if re.match(r"\d{2}:\d{2}", v)]
+
+    if len(horarios) >= 2:
+        return horarios[0], horarios[1]
+
+    return "", ""
 
 
 def auditoria_final_v10(pdf_file):
@@ -52,7 +63,6 @@ def auditoria_final_v10(pdf_file):
         for page in pdf.pages:
             texto = page.extract_text()
 
-            # Nome do motorista
             func_match = re.search(r"Funcionário:\s*(.*?)(?=Admissão|CPF|$)", texto)
             nome = func_match.group(1).strip() if func_match else "Desconhecido"
 
@@ -71,15 +81,17 @@ def auditoria_final_v10(pdf_file):
 
                     if "Trabalho" in tipo:
 
-                        inicio_fim = str(row[2]).strip() if len(row) > 2 else ""
+                        # 🔥 CORRIGIDO
+                        inicio, fim = extrair_inicio_fim(row)
+                        inicio_fim_valido = bool(inicio and fim)
+
                         j_normal = str(row[3]).strip() if len(row) > 3 else "00:00"
                         refeicao = str(row[5]).strip() if len(row) > 5 else ""
 
-                        # 🔥 INTERJ CORRIGIDO
                         interj = extrair_interj_dinamico(row)
 
-                        # 🚨 FALTA DE LANÇAMENTO
-                        if not inicio_fim or len(re.findall(r"\d{2}:\d{2}", inicio_fim)) < 2:
+                        # 🚨 FALTA DE LANÇAMENTO (AGORA CORRETO)
+                        if not inicio_fim_valido:
                             relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO")
                             continue
 
@@ -92,7 +104,7 @@ def auditoria_final_v10(pdf_file):
                             elif m_ref > 120:
                                 relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
 
-                        # ⏱️ INTERSTÍCIO (AGORA CORRETO)
+                        # ⏱️ INTERSTÍCIO (FINAL CORRETO)
                         if interj:
                             m_int = conv_min(interj)
 
@@ -102,7 +114,7 @@ def auditoria_final_v10(pdf_file):
     return relatorio
 
 
-# --- INTERFACE (LAYOUT ORIGINAL PRESERVADO) ---
+# --- INTERFACE (INALTERADA) ---
 col_logo, col_adm = st.columns([1, 1])
 
 with col_logo:
