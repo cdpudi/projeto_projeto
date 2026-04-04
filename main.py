@@ -31,7 +31,7 @@ def conv_min(h):
         return 0
 
 
-# 🔥 EXTRAÇÃO FINAL DEFINITIVA
+# 🔥 EXTRAÇÃO FINAL (COM INTERJ PRIORITÁRIO DA COLUNA)
 def extrair_dados_linha(row):
     linha = " ".join([str(c) for c in row if c])
     horarios = re.findall(r"\d{2}:\d{2}", linha)
@@ -39,13 +39,22 @@ def extrair_dados_linha(row):
     inicio, fim = "", ""
     diaria, refeicao, interj = "", "", ""
 
+    # ✔ Início/Fim robusto
     if len(horarios) >= 2:
         inicio, fim = horarios[0], horarios[1]
 
+    # 🔥 1. INTERJ DIRETO DA COLUNA (PRIORIDADE)
+    for val in row:
+        if val and re.match(r"\d{2}:\d{2}", str(val)):
+            m = conv_min(val)
+            # Interj real sempre >= 6h e <= 24h (evita pegar refeição/repouso)
+            if 360 <= m <= 1440:
+                interj = val
+
+    # 🔥 2. EXTRAÇÃO INTELIGENTE RESTANTE (fallback + refeição)
     if "08:00" in horarios:
         idx = horarios.index("08:00")
 
-        # Jornada diária
         if len(horarios) > idx + 1:
             diaria = horarios[idx + 1]
 
@@ -60,12 +69,12 @@ def extrair_dados_linha(row):
                 encontrou_refeicao = True
                 continue
 
-            # 🔥 Ignora repouso (valores pequenos após refeição)
+            # Ignora repouso
             if encontrou_refeicao and m < 60:
                 continue
 
-            # ⏱️ Interj real
-            if m >= 660:
+            # Interj fallback (caso não venha na coluna)
+            if not interj and m >= 660:
                 interj = h
                 break
 
@@ -112,7 +121,7 @@ def auditoria_final_v10(pdf_file):
                     elif conv_min(refeicao) > 120:
                         relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
 
-                    # ⏱️ INTERSTÍCIO
+                    # ⏱️ INTERSTÍCIO (AGORA CORRETO)
                     if interj:
                         m_int = conv_min(interj)
 
