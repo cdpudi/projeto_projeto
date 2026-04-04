@@ -5,7 +5,7 @@ import re
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="IA na Gestão de Processos", page_icon="🤖", layout="wide")
 
-# --- ESTILO CSS ORIGINAL ---
+# --- ESTILO CSS ORIGINAL (INALTERADO) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
@@ -18,7 +18,7 @@ st.markdown("""
     .status-badge { padding: 6px 12px; border-radius: 20px; font-size: 13px; background-color: #28a745; color: white; font-weight: bold; }
     .footer-credits { background-color: #ffffff; padding: 1rem; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; margin-top: 2rem; }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # --- FUNÇÃO AUXILIAR ---
 def conv_min(h):
@@ -29,6 +29,7 @@ def conv_min(h):
         return 0
 
 
+# 🔥 FUNÇÃO PRINCIPAL CORRIGIDA
 def auditoria_final(pdf_file):
     relatorio = {}
 
@@ -36,6 +37,7 @@ def auditoria_final(pdf_file):
         for page in pdf.pages:
             texto = page.extract_text()
 
+            # Nome do funcionário
             func_match = re.search(r"Funcionário:\s*(.*?)(?=Admissão|CPF|$)", texto)
             nome = func_match.group(1).strip() if func_match else "Desconhecido"
 
@@ -43,10 +45,31 @@ def auditoria_final(pdf_file):
                 relatorio[nome] = []
 
             table = page.extract_table()
-            if not table:
+            if not table or len(table) < 2:
                 continue
 
-            for row in table:
+            header = table[0]
+
+            # 🔥 MAPEAMENTO DINÂMICO DAS COLUNAS
+            col_map = {}
+            for i, col in enumerate(header):
+                if not col:
+                    continue
+
+                col_lower = col.lower()
+
+                if "início" in col_lower:
+                    col_map["inicio"] = i
+                elif "fim" in col_lower:
+                    col_map["fim"] = i
+                elif "refeição" in col_lower:
+                    col_map["refeicao"] = i
+                elif "interj" in col_lower:
+                    col_map["interj"] = i
+
+            # 🔥 PROCESSAMENTO DAS LINHAS
+            for row in table[1:]:
+
                 if not row or not row[0]:
                     continue
 
@@ -58,25 +81,25 @@ def auditoria_final(pdf_file):
                     if "Trabalho" not in tipo:
                         continue
 
-                    # 🔥 CAMPOS DIRETOS (SEM ADIVINHAÇÃO)
-                    inicio = str(row[2]).strip() if len(row) > 2 else ""
-                    fim = str(row[3]).strip() if len(row) > 3 else ""
-                    refeicao = str(row[6]).strip() if len(row) > 6 else ""
-                    interj = str(row[9]).strip() if len(row) > 9 else ""
+                    # 🔹 CAMPOS CORRETOS
+                    inicio = str(row[col_map.get("inicio", -1)]).strip() if "inicio" in col_map else ""
+                    fim = str(row[col_map.get("fim", -1)]).strip() if "fim" in col_map else ""
+                    refeicao = str(row[col_map.get("refeicao", -1)]).strip() if "refeicao" in col_map else ""
+                    interj = str(row[col_map.get("interj", -1)]).strip() if "interj" in col_map else ""
 
                     # 🚨 FALTA DE LANÇAMENTO
-                    if not inicio or not fim:
+                    if not inicio or not fim or inicio == "None" or fim == "None":
                         relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO")
                         continue
 
-                    # 🍱 REFEIÇÃO
-                    if not refeicao or refeicao == "00:00":
+                    # 🍱 REFEIÇÃO (CORREÇÃO FINAL)
+                    if not refeicao or refeicao in ["None", "", "00:00"]:
                         relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
                     elif conv_min(refeicao) > 120:
                         relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
 
-                    # ⏱️ INTERSTÍCIO (AGORA 100% CORRETO)
-                    if interj:
+                    # ⏱️ INTERSTÍCIO (CORRETO)
+                    if interj and interj not in ["None", ""]:
                         m_int = conv_min(interj)
 
                         if 0 < m_int < 660:
@@ -104,6 +127,19 @@ st.markdown("""
 
 c_main, c_side = st.columns([2, 1.2])
 
+with c_side:
+    st.markdown(f"""
+        <div class="side-info-card">
+            <h3 style='color: #004a99; margin-top:0; border-bottom: 2px solid #004a99; padding-bottom: 10px;'>Proposta Selecionada</h3>
+            <p style='font-size: 0.95em;'><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES<br><b>ID:</b> <code>#IA-17750026</code></p>
+            <h5 style='color: #004a99;'>📡 Monitoramento:</h5>
+            <div class="monitoring-item">✅ Validação de Interstício (Mín. 11h)</div>
+            <div class="monitoring-item">✅ Verificação de Intervalo Alimentação (Máx. 2h)</div>
+            <div class="monitoring-item">✅ Auditoria de Lançamentos Inexistentes</div>
+            <div style="text-align: center; margin-top: 20px;"><span class="status-badge">Sinalização: Ativa ✅</span></div>
+        </div>
+    """, unsafe_allow_html=True)
+
 with c_main:
     st.subheader("📁 Auditoria de Documentos")
     up = st.file_uploader("Upload PDF", type="pdf", label_visibility="collapsed")
@@ -122,4 +158,4 @@ with c_main:
                 else:
                     st.success(f"👤 {mot} - Em conformidade")
 
-st.markdown('<div class="footer-credits">Sistema de Auditoria Inteligente</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão Final | Status: Online</p></div>', unsafe_allow_html=True)
