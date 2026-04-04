@@ -20,68 +20,16 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÃO AUXILIAR ---
 def conv_min(h):
-    if not h or h == "" or h == "00:00":
-        return 0
     try:
-        h, m = h.split(":")
+        h, m = str(h).split(":")
         return int(h) * 60 + int(m)
     except:
         return 0
 
 
-# 🔥 EXTRAÇÃO FINAL (COM INTERJ PRIORITÁRIO DA COLUNA)
-def extrair_dados_linha(row):
-    linha = " ".join([str(c) for c in row if c])
-    horarios = re.findall(r"\d{2}:\d{2}", linha)
-
-    inicio, fim = "", ""
-    diaria, refeicao, interj = "", "", ""
-
-    # ✔ Início/Fim robusto
-    if len(horarios) >= 2:
-        inicio, fim = horarios[0], horarios[1]
-
-    # 🔥 1. INTERJ DIRETO DA COLUNA (PRIORIDADE)
-    for val in row:
-        if val and re.match(r"\d{2}:\d{2}", str(val)):
-            m = conv_min(val)
-            # Interj real sempre >= 6h e <= 24h (evita pegar refeição/repouso)
-            if 360 <= m <= 1440:
-                interj = val
-
-    # 🔥 2. EXTRAÇÃO INTELIGENTE RESTANTE (fallback + refeição)
-    if "08:00" in horarios:
-        idx = horarios.index("08:00")
-
-        if len(horarios) > idx + 1:
-            diaria = horarios[idx + 1]
-
-        encontrou_refeicao = False
-
-        for h in horarios[idx + 2:]:
-            m = conv_min(h)
-
-            # 🍱 Refeição
-            if 30 <= m <= 150 and not encontrou_refeicao:
-                refeicao = h
-                encontrou_refeicao = True
-                continue
-
-            # Ignora repouso
-            if encontrou_refeicao and m < 60:
-                continue
-
-            # Interj fallback (caso não venha na coluna)
-            if not interj and m >= 660:
-                interj = h
-                break
-
-    return inicio, fim, diaria, refeicao, interj
-
-
-def auditoria_final_v10(pdf_file):
+def auditoria_final(pdf_file):
     relatorio = {}
 
     with pdfplumber.open(pdf_file) as pdf:
@@ -99,7 +47,10 @@ def auditoria_final_v10(pdf_file):
                 continue
 
             for row in table:
-                if row[0] and re.match(r"^\d{2}/\d{2}/\d{2}", row[0]):
+                if not row or not row[0]:
+                    continue
+
+                if re.match(r"^\d{2}/\d{2}/\d{2}", str(row[0])):
 
                     data_dia = row[0].split()[0]
                     tipo = str(row[1]).strip()
@@ -107,21 +58,24 @@ def auditoria_final_v10(pdf_file):
                     if "Trabalho" not in tipo:
                         continue
 
-                    inicio, fim, diaria, refeicao, interj = extrair_dados_linha(row)
-                    inicio_fim_valido = bool(inicio and fim)
+                    # 🔥 CAMPOS DIRETOS (SEM ADIVINHAÇÃO)
+                    inicio = str(row[2]).strip() if len(row) > 2 else ""
+                    fim = str(row[3]).strip() if len(row) > 3 else ""
+                    refeicao = str(row[6]).strip() if len(row) > 6 else ""
+                    interj = str(row[9]).strip() if len(row) > 9 else ""
 
                     # 🚨 FALTA DE LANÇAMENTO
-                    if not inicio_fim_valido:
+                    if not inicio or not fim:
                         relatorio[nome].append(f"⚠️ {data_dia} - FALTA DE LANÇAMENTO")
                         continue
 
                     # 🍱 REFEIÇÃO
-                    if not refeicao:
+                    if not refeicao or refeicao == "00:00":
                         relatorio[nome].append(f"🍱 {data_dia} - FALTA INTERVALO REFEIÇÃO")
                     elif conv_min(refeicao) > 120:
                         relatorio[nome].append(f"🍱 {data_dia} - REFEIÇÃO EXCEDEU 2H ({refeicao})")
 
-                    # ⏱️ INTERSTÍCIO (AGORA CORRETO)
+                    # ⏱️ INTERSTÍCIO (AGORA 100% CORRETO)
                     if interj:
                         m_int = conv_min(interj)
 
@@ -146,22 +100,9 @@ st.markdown("""
         <p>Workshop: Laboratório prático focado na <b>convergência entre Inteligência Artificial e gestão estratégica</b>.</p>
         <div class="quote-section">"Pensar de forma inteligente não é apenas automatizar tarefas, mas redesenhar processos para que a tecnologia potencialize o capital humano..."</div>
     </div>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 c_main, c_side = st.columns([2, 1.2])
-
-with c_side:
-    st.markdown(f"""
-        <div class="side-info-card">
-            <h3 style='color: #004a99; margin-top:0; border-bottom: 2px solid #004a99; padding-bottom: 10px;'>Proposta Selecionada</h3>
-            <p style='font-size: 0.95em;'><b>Aluna:</b> RAYNARAH MALAQUIAS SOARES<br><b>ID:</b> <code>#IA-17750026</code></p>
-            <h5 style='color: #004a99;'>📡 Monitoramento:</h5>
-            <div class="monitoring-item">✅ Validação de Interstício (Mín. 11h)</div>
-            <div class="monitoring-item">✅ Verificação de Intervalo Alimentação (Máx. 2h)</div>
-            <div class="monitoring-item">✅ Auditoria de Lançamentos Inexistentes</div>
-            <div style="text-align: center; margin-top: 20px;"><span class="status-badge">Sinalização: Ativa ✅</span></div>
-        </div>
-        """, unsafe_allow_html=True)
 
 with c_main:
     st.subheader("📁 Auditoria de Documentos")
@@ -169,18 +110,16 @@ with c_main:
 
     if up:
         with st.status("Processando Auditoria...", expanded=False):
-            res = auditoria_final_v10(up)
+            res = auditoria_final(up)
 
         if res:
             st.markdown("### 🚩 Inconsistências Identificadas")
             for mot, errs in res.items():
                 if errs:
                     with st.expander(f"👤 {mot}"):
-                        for e in sorted(list(set(errs))):
+                        for e in sorted(set(errs)):
                             st.error(e)
                 else:
                     st.success(f"👤 {mot} - Em conformidade")
-        else:
-            st.success("✅ Nenhuma inconsistência detectada nos dias com jornada.")
 
-st.markdown('<div class="footer-credits"><p style="font-size: 0.8em; color: #999;">Workshop IA Aplicada | Versão Final | Status: Online</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-credits">Sistema de Auditoria Inteligente</div>', unsafe_allow_html=True)
